@@ -5,60 +5,64 @@ from typing import List
 import pandas as pd
 from prophet import Prophet
 
-app = FastAPI(
-    title="Motor Predictivo de Demanda",
-    description="Microservicio de Series Temporales con Prophet para Mipymes de Paraguay",
-    version="1.0.0"
-)
+app = FastAPI(title="Motor Predictivo de Demanda")
 
-# Configuración de CORS para permitir peticiones desde el Frontend (Next.js)
+# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite peticiones desde cualquier origen en desarrollo
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Permite GET, POST, OPTIONS, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class RegistroVenta(BaseModel):
+# Modelos de Pydantic para validar los datos que envía React
+class VentaItem(BaseModel):
     fecha: str
     cantidad: float
 
-class SolicitudPrediccion(BaseModel):
+class PredictionPayload(BaseModel):
     dias_proyeccion: int = 30
-    historico: List[RegistroVenta]
-
-@app.get("/")
-def home():
-    return {"status": "online", "message": "Motor Predictivo FastAPI + Prophet Operativo"}
+    historico: List[VentaItem]
 
 @app.post("/predict")
-def generar_prediccion(data: SolicitudPrediccion):
+def predict(payload: PredictionPayload):
     try:
-        if len(data.historico) < 5:
+        if len(payload.historico) < 5:
             raise HTTPException(status_code=400, detail="Se requieren al menos 5 registros históricos.")
 
-        # Convertir JSON entrante a DataFrame de Pandas
-        df = pd.DataFrame([item.dict() for item in data.historico])
-        df = df.rename(columns={"fecha": "ds", "cantidad": "y"})
-        df['ds'] = pd.to_datetime(df['ds'])
+        # Convertir a DataFrame de pandas
+        data = [item.model_dump() for item in payload.historico]
+        df = pd.DataFrame(data)
 
-        # Entrenar modelo Prophet
-        model = Prophet(daily_seasonality=True, yearly_seasonality=False, weekly_seasonality=False)
-        model.fit(df)
+        # Renombrar columnas para Prophet
+        df['fecha'] = pd.to_datetime(df['fecha'])
+        df_prophet = df.rename(columns={'fecha': 'ds', 'cantidad': 'y'})
 
-        # Generar fechas futuras
-        future = model.make_future_dataframe(periods=data.dias_proyeccion)
+        # Crear y entrenar modelo Prophet
+        model = Prophet(yearly_seasonality=False, weekly_seasonality=True, daily_seasonality=False)
+        model.fit(df_prophet)
+
+        # Proyectar días futuros
+        future = model.make_future_dataframe(periods=payload.dias_proyeccion)
         forecast = model.predict(future)
 
-        # Filtrar solo el horizonte futuro proyectado
-        resultado = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(data.dias_proyeccion)
-        resultado['ds'] = resultado['ds'].dt.strftime('%Y-%m-%d')
+        # Formatear la respuesta solo para el rango futuro
+        forecast_future = forecast.tail(payload.dias_proyeccion)
+        
+        predicciones = []
+        for _, row in forecast_future.iterrows():
+            predicciones.append({
+                "ds": row['ds'].strftime('%Y-%m-%d'),
+                "yhat": round(max(0, float(row['yhat'])), 2),
+                "yhat_lower": round(max(0, float(row['yhat_lower'])), 2),
+                "yhat_upper": round(max(0, float(row['yhat_upper'])), 2)
+            })
 
         return {
             "status": "success",
-            "dias_proyectados": data.dias_proyeccion,
-            "predicciones": resultado.to_dict(orient="records")
+            "dias_proyectados": payload.dias_proyeccion,
+            "predicciones": predicciones
         }
 
     except Exception as e:
