@@ -1,139 +1,186 @@
-"use client";
+'use client';
 
-import { useState, ChangeEvent } from "react";
+import React, { useState } from 'react';
+import { VentaRaw, PrediccionPunto, RecomendacionStock } from './predictivo/types';
+import { IngestaVentas } from './predictivo/IngestaVentas';
+import { MetricasResumen } from './predictivo/MetricasResumen';
+import { TableroPredictivo } from './predictivo/TableroPredictivo';
+import { GraficoDistribucion } from './predictivo/GraficoDistribucion';
+import { ModuloReportes } from './predictivo/ModuloReportes';
 
-interface ResultadoAnalisis {
-  sku: string;
-  producto: string;
-  demanda_proyectada_30d: number;
-  stock_actual: number;
-  accion: "AUMENTAR_STOCK" | "DISMINUIR_PEDIDOS" | "STOCK_OPTIMO";
-  cantidad_a_ajustar: number;
-  dias_restantes_stock: number;
-  momento_compra: string;
-}
+type ModuloActivo = 'dashboard' | 'ingesta' | 'predictivo' | 'reportes';
 
 export default function AnalisisPredictivo() {
-  const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [resultados, setResultados] = useState<ResultadoAnalisis[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [datosHistoricos, setDatosHistoricos] = useState<VentaRaw[]>([]);
+  const [recomendaciones, setRecomendaciones] = useState<RecomendacionStock[]>([]);
+  const [moduloActivo, setModuloActivo] = useState<ModuloActivo>('dashboard');
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setError(null);
-    }
+  const handleDatosCargados = (datos: VentaRaw[]) => {
+    setDatosHistoricos(datos);
+    setRecomendaciones([]);
   };
 
-  const ejecutarAnalisis = async () => {
-    if (!file) {
-      setError("Por favor, selecciona un archivo CSV primero.");
-      return;
-    }
+  const handlePrediccionCalculada = (prediccionesMap: Record<string, PrediccionPunto[]>) => {
+    const nuevasRecomendaciones: RecomendacionStock[] = [];
 
-    setLoading(true);
-    setError(null);
+    Object.entries(prediccionesMap).forEach(([producto, puntos]) => {
+      if (puntos.length === 0) return;
 
-    const formData = new FormData();
-    formData.append("file", file);
+      const demandaEstimada = puntos.reduce((acc, p) => acc + Math.max(0, p.yhat), 0);
+      const ventasProd = datosHistoricos.filter((d) => d.producto === producto);
+      const totalHistorico = ventasProd.reduce((acc, d) => acc + d.cantidad, 0);
+      const stockReferencia = Math.round(totalHistorico / (ventasProd.length || 1)) * 30;
 
-    try {
-      const response = await fetch("http://127.0.0.1:8000/predict-file", {
-        method: "POST",
-        body: formData,
+      const diferencia = demandaEstimada - stockReferencia;
+      const porcentajeAjuste = stockReferencia > 0 ? Math.round((diferencia / stockReferencia) * 100) : 100;
+
+      let sugerencia: 'INCREMENTAR' | 'REDUCIR' | 'MANTENER' = 'MANTENER';
+      if (porcentajeAjuste > 5) sugerencia = 'INCREMENTAR';
+      if (porcentajeAjuste < -5) sugerencia = 'REDUCIR';
+
+      nuevasRecomendaciones.push({
+        producto,
+        stockActual: stockReferencia,
+        demandaEstimada,
+        sugerencia,
+        porcentajeAjuste,
       });
+    });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        const detalle = typeof errorData.detail === "string" 
-          ? errorData.detail 
-          : JSON.stringify(errorData.detail);
-        throw new Error(detalle || "Error al procesar el archivo");
-      }
-
-      const data = await response.json();
-      setResultados(data.analisis);
-    } catch (err: any) {
-      setError(err.message || "No se pudo conectar con el motor predictivo.");
-    } finally {
-      setLoading(false);
-    }
+    setRecomendaciones(nuevasRecomendaciones);
   };
 
   return (
-    <div className="p-6 bg-white rounded-xl shadow-md border border-gray-100">
-      <h2 className="text-xl font-bold mb-2">Proyección de Demanda y Reabastecimiento</h2>
-      <p className="text-gray-500 text-sm mb-4">
-        Sube el historial de ventas en formato CSV para calcular la demanda estimada y sugerencias de compra.
-      </p>
+   <div className="min-h-screen bg-slate-100">
+      {/* 1. BARRA LATERAL (SIDEBAR): Fija con fixed de tope a tope */}
+      <aside className="fixed top-0 left-0 w-64 h-screen bg-slate-900 text-white flex flex-col justify-between p-4 shadow-xl shrink-0 z-50 print:hidden">
+        <div>
+          <div className="flex items-center gap-3 px-2 py-3 border-b border-slate-800 mb-5">
+            <div className="bg-blue-600 p-2 rounded-lg text-white font-bold text-lg">🐤</div>
+            <div>
+              <h2 className="font-bold text-sm leading-tight">Inventario Villarrica</h2>
+              <p className="text-[11px] text-slate-400">Sistema Predictivo</p>
+            </div>
+          </div>
+          <nav className="space-y-1">
+            <button
+              onClick={() => setModuloActivo('dashboard')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                moduloActivo === 'dashboard'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              Dashboard
+            </button>
 
-      <div className="flex flex-col md:flex-row gap-4 mb-6 items-center">
-        <input
-          type="file"
-          accept=".csv"
-          onChange={handleFileChange}
-          className="border p-2 rounded w-full md:w-auto text-sm"
-        />
-        <button
-          onClick={ejecutarAnalisis}
-          disabled={loading || !file}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded transition disabled:bg-gray-300"
-        >
-          {loading ? "Analizando y Calculando..." : "Calcular Pronóstico"}
-        </button>
-      </div>
+            <button
+              onClick={() => setModuloActivo('ingesta')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                moduloActivo === 'ingesta'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              Carga de Archivos
+            </button>
 
-      {error && (
-        <div className="p-3 mb-4 text-sm text-red-700 bg-red-100 rounded-lg">
-          {error}
+            <button
+              onClick={() => setModuloActivo('predictivo')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                moduloActivo === 'predictivo'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              Proyección
+            </button>
+
+            <button
+              onClick={() => setModuloActivo('reportes')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                moduloActivo === 'reportes'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              Reportes
+            </button>
+          </nav>
         </div>
-      )}
 
-      {resultados.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-gray-50 text-gray-700 border-b">
-              <tr>
-                <th className="p-3">SKU</th>
-                <th className="p-3">Producto</th>
-                <th className="p-3">Demanda 30d</th>
-                <th className="p-3">Stock Actual</th>
-                <th className="p-3">Estado</th>
-                <th className="p-3">Ajuste Sugerido</th>
-                <th className="p-3">Urgencia</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {resultados.map((item) => (
-                <tr key={item.sku}>
-                  <td className="p-3 font-mono">{item.sku}</td>
-                  <td className="p-3 font-medium">{item.producto}</td>
-                  <td className="p-3">{item.demanda_proyectada_30d} un.</td>
-                  <td className="p-3">{item.stock_actual} un.</td>
-                  <td className="p-3">
-                    <span
-                      className={`px-2 py-1 rounded text-xs font-semibold ${
-                        item.accion === "AUMENTAR_STOCK"
-                          ? "bg-amber-100 text-amber-800"
-                          : item.accion === "DISMINUIR_PEDIDOS"
-                          ? "bg-red-100 text-red-800"
-                          : "bg-green-100 text-green-800"
-                      }`}
-                    >
-                      {item.accion}
-                    </span>
-                  </td>
-                  <td className="p-3 font-bold">
-                    {item.cantidad_a_ajustar > 0 ? `+${item.cantidad_a_ajustar}` : "0"}
-                  </td>
-                  <td className="p-3 text-xs text-gray-600">{item.momento_compra}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="pt-3 border-t border-slate-800 text-xs text-slate-400">
+          <p className="font-semibold text-slate-300">Estado del Sistema</p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className={`w-2 h-2 rounded-full ${datosHistoricos.length > 0 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            <span>{datosHistoricos.length > 0 ? `${datosHistoricos.length} filas activas` : 'Sin datos cargados'}</span>
+          </div>
         </div>
-      )}
+      </aside>
+
+      {/* ÁREA PRINCIPAL: */}
+    
+      <main className="pl-64 p-6 space-y-6 min-h-screen">
+        <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">
+              {moduloActivo === 'dashboard' && 'Panel General de Control'}
+              {moduloActivo === 'ingesta' && 'Carga e Ingesta de Ventas'}
+              {moduloActivo === 'predictivo' && 'Análisis Predictivo de Demanda'}
+              {moduloActivo === 'reportes' && 'Generación de Reportes'}
+            </h1>
+            <p className="text-xs text-gray-500 mt-0.5">Sistema Inteligente de Gestión de Inventarios</p>
+          </div>
+
+          {datosHistoricos.length > 0 && (
+            <span className="bg-blue-50 text-blue-700 text-xs font-semibold px-3 py-1.5 rounded-full border border-blue-200">
+              Datos Activos: {datosHistoricos.length} filas
+            </span>
+          )}
+        </header>
+
+        {/* CONTENIDO PRINCIPAL */}
+        {moduloActivo === 'ingesta' && (
+          <IngestaVentas onDatosCargados={handleDatosCargados} />
+        )}
+
+        {datosHistoricos.length === 0 && moduloActivo !== 'ingesta' && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 p-6 rounded-xl text-center text-sm space-y-3">
+            <p className="font-semibold">No hay datos de ventas cargados en el sistema.</p>
+            <button
+              onClick={() => setModuloActivo('ingesta')}
+              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700"
+            >
+              Ir a Carga de Ventas
+            </button>
+          </div>
+        )}
+
+        {datosHistoricos.length > 0 && (
+          <div className="space-y-6">
+            {moduloActivo === 'dashboard' && (
+              <>
+                <MetricasResumen datos={datosHistoricos} />
+                <GraficoDistribucion datos={datosHistoricos} />
+              </>
+            )}
+
+            {moduloActivo === 'predictivo' && (
+              <TableroPredictivo
+                datos={datosHistoricos}
+                onPrediccionCalculada={handlePrediccionCalculada}
+              />
+            )}
+
+            {moduloActivo === 'reportes' && (
+              <ModuloReportes
+                datos={datosHistoricos}
+                recomendaciones={recomendaciones}
+              />
+            )}
+          </div>
+        )}
+      </main>
     </div>
   );
 }
