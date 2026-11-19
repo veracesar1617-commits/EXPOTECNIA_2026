@@ -1,7 +1,7 @@
 // ModuloReportes.tsx
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { VentaRaw, RecomendacionStock, RespuestaInforme } from './types';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { Button } from '../ui/Buttons';
@@ -191,6 +191,20 @@ export function ModuloReportes({ datos, recomendaciones }: ModuloReportesProps) 
 
   // Datos de inventario ingresados por el usuario (stock real y precio confirmado)
   const [inventario, setInventario] = useState<Record<string, FilaInventario>>({});
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/inventario').then((r) => r.json()).then(setInventario).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (Object.keys(inventario).length === 0) return;
+    fetch('http://127.0.0.1:8000/inventario', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(inventario),
+    }).catch(() => {});
+  }, [inventario]);
+
   const [horizonte, setHorizonte] = useState<number>(30);
   const [verTodos, setVerTodos] = useState(false);
   const [mensajeCarga, setMensajeCarga] = useState<{ tipo: 'ok' | 'aviso' | 'error'; texto: string } | null>(null);
