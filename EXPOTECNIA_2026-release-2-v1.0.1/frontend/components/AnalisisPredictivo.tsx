@@ -104,6 +104,13 @@ export default function AnalisisPredictivo() {
     }
   }, []);
 
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/ventas')
+      .then((r) => r.json())
+      .then((d) => setDatosHistoricos(d))
+      .catch(() => {});
+  }, []);
+
   const seleccionarModulo = (modulo: ModuloActivo) => {
     setModuloActivo(modulo);
     if (window.innerWidth < ANCHO_PANTALLA_ESCRITORIO) {
@@ -114,6 +121,11 @@ export default function AnalisisPredictivo() {
   const handleDatosCargados = (datos: VentaRaw[]) => {
     setDatosHistoricos(datos);
     setRecomendaciones([]);
+    fetch('http://127.0.0.1:8000/ventas', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(datos),
+    }).catch(console.error);
   };
 
   const handlePrediccionCalculada = (prediccionesMap: Record<string, PrediccionPunto[]>) => {

@@ -6,6 +6,7 @@ import numpy as np
 from prophet import Prophet
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+from db import SessionLocal, Venta, Inventario
 
 app = FastAPI()
 
@@ -653,3 +654,38 @@ def generar_informe_inventario(req: RequestInforme):
         "detalles": detalles_informe,
         "observaciones": observaciones,
     }
+
+
+@app.get("/ventas")
+def listar_ventas():
+    with SessionLocal() as s:
+        return [{"fecha": v.fecha, "producto": v.producto, "cantidad": v.cantidad,
+                 "categoria": v.categoria, "precio_compra": v.precio_compra}
+                for v in s.query(Venta).all()]
+
+
+@app.put("/ventas")
+def reemplazar_ventas(filas: List[Dict[str, Any]]):
+    with SessionLocal() as s:
+        s.query(Venta).delete()
+        s.bulk_insert_mappings(Venta, [
+            {k: f.get(k) for k in ("fecha", "producto", "cantidad", "categoria", "precio_compra")}
+            for f in filas])
+        s.commit()
+    return {"guardadas": len(filas)}
+
+
+@app.get("/inventario")
+def listar_inventario():
+    with SessionLocal() as s:
+        return {i.producto: {"stock": i.stock, "precio": i.precio} for i in s.query(Inventario).all()}
+
+
+@app.put("/inventario")
+def guardar_inventario(data: Dict[str, Dict[str, Any]]):
+    with SessionLocal() as s:
+        s.query(Inventario).delete()
+        for prod, v in data.items():
+            s.add(Inventario(producto=prod, stock=v.get("stock"), precio=v.get("precio")))
+        s.commit()
+    return {"guardados": len(data)}
